@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ThreatHunter v8.2.6 - Bulletproof Sankey Tooltip</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #f1f5f9; margin: 0; color: #1e293b; font-size: 13px; }
+        .header-panel { background: #0f172a; color: white; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 4px rgba(0,0,0,0.2);}
+        .time-bar { background: #334155; color: white; padding: 8px 20px; display: flex; gap: 15px; align-items: center; }
+        .main-content { padding: 20px; }
+        .widget-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; }
+        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; position: relative;}
+        .card h3 { font-size: 11px; margin: 0 0 10px 0; color: #64748b; border-bottom: 1px solid #f1f5f9; padding-bottom: 5px; text-transform: uppercase;}
+        .chart-ctrl { position: absolute; top: 10px; right: 10px; display: flex; gap: 3px; }
+        .ctrl-btn { font-size: 9px; background: #f1f5f9; border: 1px solid #cbd5e1; padding: 2px 6px; cursor: pointer; border-radius: 3px; font-weight: bold; color: #64748b;}
+        .ctrl-btn:hover { background: #e2e8f0; }
+        .ctrl-btn.active { background: #2563eb; color: white; border-color: #2563eb; }
+        .btn { padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; color: white; font-size: 11px; transition: 0.2s;}
+        .btn-blue { background: #2563eb; } .btn-green { background: #10b981; } .btn-red { background: #e11d48; } .btn-purple { background: #8b5cf6; } .btn-teal { background: #0d9488; }
+        input, select { padding: 6px; border-radius: 4px; border: 1px solid #cbd5e1; font-size: 11px; outline: none;}
+        .top-list { list-style: none; padding: 0; margin: 0; }
+        .top-list li { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #f1f5f9; cursor: pointer; color: #2563eb; font-size: 12px;}
+        .top-list li:hover { background: #eff6ff; }
+        .metric-val { color: #0f172a; font-weight: 700; font-family: monospace; font-size: 13px;}
+        .unit { font-size: 9px; color: #94a3b8; margin-left: 3px; font-weight: normal;}
+        .filter-item { background:white; padding:4px 8px; border-radius:15px; border:1px solid #cbd5e1; display:inline-flex; align-items:center; gap:6px; font-size:11px;}
+        .modal { display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(15,23,42,0.95); backdrop-filter: blur(4px);}
+        .modal-header { background: #1e293b; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+        .modal-content { width: 100%; height: calc(100% - 60px); position: relative; }
+        .close-btn { color: #f87171; font-size: 24px; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <datalist id="column-datalist"></datalist>
+
+    <div class="header-panel">
+        <div style="display:flex; align-items:center; gap: 15px;">
+            <strong style="font-size: 16px;">ThreatHunter v8.2.6</strong>
+            <button class="btn btn-blue" onclick="document.getElementById('file-input').click()">📁 Tải Log Lên (Batch)</button>
+            <input type="file" id="file-input" accept=".csv" multiple style="display:none;" onchange="handleFileUpload()">
+            
+            <button class="btn btn-teal" onclick="openSankeyModal()">🌊 Mở Rộng Sankey</button>
+            <button class="btn btn-purple" onclick="openStarGraphModal()">🌐 Mạng Lưới (Star Graph)</button>
+        </div>
+        <div style="display:flex; gap: 10px; align-items:center;">
+            <button class="btn btn-red" style="padding:4px 8px; font-size:10px; background:transparent; border:1px solid #e11d48;" onclick="clearAllLogs()">XÓA DATA</button>
+            <input type="text" id="q-search" placeholder="Tìm kiếm nhanh..." style="width: 200px;">
+            <button class="btn btn-blue" onclick="loadAllData()">Search</button>
+            <button class="btn btn-red" onclick="resetAll()">Reset All</button>
+        </div>
+    </div>
+
+    <div class="time-bar">
+        <span>🕒 Thời gian:</span>
+        <select id="time-preset" onchange="handleTimePreset(this.value)">
+            <option value="all" selected>Tất cả (All)</option>
+            <option value="3h">3 Giờ qua</option>
+            <option value="24h">24 Giờ qua</option>
+        </select>
+        <input type="datetime-local" id="start-time"> ➔ <input type="datetime-local" id="end-time">
+        <button class="btn btn-green" onclick="loadAllData()">Áp dụng</button>
+    </div>
+
+    <div class="main-content">
+        <div class="card" style="border-left: 4px solid #8b5cf6; padding:10px 15px; display:flex; flex-direction:row; align-items:center; gap:15px; margin-bottom:15px;">
+            <strong style="color:#8b5cf6;">📁 Nguồn Log (Datasets):</strong>
+            <div id="dataset-ui" style="display:flex; gap:10px; flex-wrap:wrap;">Đang tải...</div>
+        </div>
+
+        <div class="card" style="border-left: 4px solid #10b981; display:flex; flex-direction:column; gap:15px;">
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <strong style="color:#10b981;">🎨 Flow Designer:</strong>
+                <div id="flow-layers-ui" style="display:flex; gap:10px; flex-wrap:wrap;"></div>
+                <button class="btn btn-green" onclick="addFlowLayer()">+ Thêm tầng</button>
+                <button class="btn btn-blue" style="margin-left:auto;" onclick="loadAllData()">▶ Cập nhật Biểu đồ</button>
+            </div>
+            
+            <div style="border-top: 1px solid #e2e8f0; padding-top:15px; display:flex; align-items:center; gap:15px; flex-wrap:wrap;">
+                <strong style="color:#3b82f6;">🛠️ Bộ lọc & Điều kiện:</strong>
+                <div id="filter-display" style="display:flex; flex-wrap:wrap; gap:5px; flex:1;"></div>
+                
+                <div style="display:flex; gap:5px; background:#f8fafc; padding:4px; border-radius:4px; border:1px solid #cbd5e1;">
+                    <input type="text" list="column-datalist" id="manual-filter-col" placeholder="Cột..." style="width:120px; border:none; background:transparent; font-size:11px;">
+                    <select id="manual-filter-op" style="border:none; background:transparent; font-size:11px; outline:none; font-weight:bold; color:#3b82f6;">
+                        <option value="=">=</option>
+                        <option value="!=">!=</option>
+                        <option value="ILIKE">Chứa</option>
+                    </select>
+                    <input type="text" id="manual-filter-val" placeholder="Giá trị..." style="width:120px; border:none; background:transparent; font-size:11px;">
+                    <button class="btn btn-blue" onclick="addManualFilter()" style="padding:2px 8px;">Thêm</button>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 15px; display:flex; gap:10px; align-items:center; background:white; padding:10px; border-radius:8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <strong>+ Thêm Dashboard:</strong>
+            <input type="text" list="column-datalist" id="new-widget-col" placeholder="Tên trường..." style="width:200px;">
+            <select id="new-widget-metric">
+                <option value="sessions">Count (Sessions)</option>
+                <option value="bytes">Sum (Total Bytes)</option>
+                <option value="sent">Sum (Bytes Sent)</option>
+                <option value="received">Sum (Bytes Received)</option>
+            </select>
+            <button class="btn btn-blue" onclick="addWidget()">Thêm</button>
+        </div>
+
+        <div id="widgets-container" class="widget-grid"></div>
+
+        <div class="card">
+            <h3>Luồng dữ liệu (Sankey Preview) - Bấm vào Node để Lọc</h3>
+            <div id="sankey-chart" style="width:100%; height:550px;"></div>
+        </div>
+
+        <div class="card" style="overflow:auto; max-height:500px;">
+            <table id="log-table" style="width:100%; border-collapse:collapse; font-size:10px; text-align:left;">
+                <thead><tr id="thr" style="background:#f1f5f9; position:sticky; top:0;"></tr></thead>
+                <tbody id="tbd"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="graphModal" class="modal">
+        <div class="modal-header">
+            <div>
+                <strong style="font-size:16px;">🌐 Connected Star Graph (Source ➔ Dest)</strong>
+            </div>
+            <div>
+                <button class="btn btn-red" style="margin-right:15px;" onclick="resetFiltersInModal()">Reset Filters</button>
+                <span class="close-btn" onclick="closeStarGraphModal()">&times; ĐÓNG</span>
+            </div>
+        </div>
+        <div class="modal-content"><div id="graph-modal-chart" style="width:100%; height:100%;"></div></div>
+    </div>
+
+    <div id="sankeyModal" class="modal">
+        <div class="modal-header">
+            <div>
+                <strong style="font-size:16px;">🌊 Deep Sankey Explorer (Hỗ trợ Correlate đa Log)</strong>
+            </div>
+            <div>
+                <button class="btn btn-red" style="margin-right:15px;" onclick="resetFiltersInModal()">Reset Filters</button>
+                <span class="close-btn" onclick="closeSankeyModal()">&times; ĐÓNG</span>
+            </div>
+        </div>
+        <div class="modal-content"><div id="sankey-modal-chart" style="width:100%; height:100%;"></div></div>
+    </div>
+
+<script>
+    var sankeyChart = echarts.init(document.getElementById('sankey-chart'));
+    var graphModalChart = null, sankeyModalChart = null;
+    var allColumns = [], filters = [], activeDatasets = [], widgetCharts = {};
+    var flowLayers = ["Source address", "Destination address", "Application"];
+    
+    var config = { widgets: [
+        { col: "Source address", metric: "sessions", view: "list" }, { col: "Source address", metric: "bytes", view: "bar" },
+        { col: "Application", metric: "sessions", view: "list" }, { col: "Application", metric: "bytes", view: "pie" },
+        { col: "Source Country", metric: "bytes", view: "bar" }, { col: "Destination Country", metric: "bytes", view: "pie" }
+    ]};
+
+    async function init() {
+        await loadDatasets(); 
+        document.getElementById('time-preset').value = 'all';
+        handleTimePreset('all'); 
+        renderFlowDesigner();
+        renderFilterUI();
+        
+        // Gắn sự kiện an toàn cho Sankey
+        bindSafeSankeyClick(sankeyChart);
+    }
+
+    async function loadDatasets() {
+        const res = await fetch('/api/datasets');
+        const files = await res.json();
+        activeDatasets = files;
+        renderDatasetsUI(files);
+        await refreshSchemaAndData(); 
+    }
+
+    function renderDatasetsUI(files) {
+        const ui = document.getElementById('dataset-ui');
+        if(files.length === 0) {
+            ui.innerHTML = `<span style="color:#e11d48; font-size:12px;">Chưa có dữ liệu. Vui lòng bấm [Tải Log Lên] để bắt đầu.</span>`;
+            return;
+        }
+        ui.innerHTML = files.map(f => `
+            <label style="background:#f1f5f9; padding:4px 8px; border-radius:4px; border:1px solid #cbd5e1; cursor:pointer; font-size:12px; display:flex; align-items:center; gap:5px; font-weight:bold; color:#0f172a;">
+                <input type="checkbox" value="${f}" ${activeDatasets.includes(f) ? 'checked' : ''} onchange="toggleDataset('${f}', this.checked)">
+                ${f.replace('.parquet', '').toUpperCase()}
+            </label>
+        `).join('');
+    }
+
+    function toggleDataset(file, isChecked) {
+        if(isChecked) activeDatasets.push(file);
+        else activeDatasets = activeDatasets.filter(f => f !== file);
+        refreshSchemaAndData();
+    }
+
+    async function refreshSchemaAndData() {
+        if(activeDatasets.length === 0) {
+            allColumns = []; document.getElementById('column-datalist').innerHTML = '';
+            document.getElementById('widgets-container').innerHTML = '';
+            sankeyChart.clear(); document.getElementById('tbd').innerHTML = '';
+            return;
+        }
+        const dStr = encodeURIComponent(JSON.stringify(activeDatasets));
+        const res = await fetch(`/api/columns?datasets=${dStr}`);
+        allColumns = await res.json();
+        document.getElementById('column-datalist').innerHTML = allColumns.map(c => `<option value="${c}">`).join('');
+        loadAllData();
+    }
+
+    // --- HÀM BẮT SỰ KIỆN CLICK SANKEY BẤT BẠI ---
+    function bindSafeSankeyClick(chartInstance) {
+        chartInstance.off('click');
+        chartInstance.on('click', function(p) {
+            // Chỉ bắt sự kiện nếu click vào Node (bỏ qua đường nối Edge)
+            if (p.dataType === 'node' && p.name && p.name.startsWith('T') && p.name.includes(':')) {
+                let firstColonIdx = p.name.indexOf(':');
+                let idxStr = p.name.substring(1, firstColonIdx);
+                let valStr = p.name.substring(firstColonIdx + 1).trim();
+                
+                let layerIdx = parseInt(idxStr);
+                if (!isNaN(layerIdx) && flowLayers[layerIdx]) {
+                    if(valStr !== "Unknown" && valStr !== "N/A") {
+                        addFilterRow(flowLayers[layerIdx], valStr);
+                    }
+                }
+            }
+        });
+    }
+
+    function openStarGraphModal() {
+        document.getElementById('graphModal').style.display = "block";
+        if (!graphModalChart) {
+            graphModalChart = echarts.init(document.getElementById('graph-modal-chart'));
+            graphModalChart.on('click', p => { 
+                if(p.dataType === 'node') addFilterRow(p.data.category === 0 ? "Source address" : "Destination address", p.name); 
+            });
+        }
+        graphModalChart.resize(); loadStarGraphData();
+    }
+    function closeStarGraphModal() { document.getElementById('graphModal').style.display = "none"; }
+
+    function openSankeyModal() {
+        document.getElementById('sankeyModal').style.display = "block";
+        if (!sankeyModalChart) {
+            sankeyModalChart = echarts.init(document.getElementById('sankey-modal-chart'));
+            bindSafeSankeyClick(sankeyModalChart);
+        }
+        sankeyModalChart.resize(); loadAllData(); 
+    }
+    function closeSankeyModal() { document.getElementById('sankeyModal').style.display = "none"; }
+    function resetFiltersInModal() { filters = []; renderFilterUI(); loadAllData(); if(document.getElementById('graphModal').style.display==="block") loadStarGraphData(); }
+
+    function renderFilterUI() {
+        const container = document.getElementById('filter-display');
+        if (filters.length === 0) { 
+            container.innerHTML = '<span style="color:#94a3b8; font-style:italic;">Chưa có bộ lọc. Click vào biểu đồ để lọc.</span>'; 
+            return; 
+        }
+        container.innerHTML = filters.map((f, i) => `
+            <span class="filter-item">
+                ${f.logic === 'OR' && i > 0 ? '<b style="color:#f59e0b">OR</b> ' : ''}
+                ${f.col} <b style="color:#3b82f6;">${f.op}</b> <strong>${f.val}</strong>
+                <span onclick="filters.splice(${i},1);renderFilterUI();loadAllData();if(document.getElementById('graphModal').style.display==='block') loadStarGraphData();" style="color:#e11d48; cursor:pointer; margin-left:4px; font-weight:bold; font-size:14px; line-height:1;">×</span>
+            </span>
+        `).join('');
+    }
+
+    function addManualFilter() {
+        let col = document.getElementById('manual-filter-col').value;
+        let op = document.getElementById('manual-filter-op').value;
+        let val = document.getElementById('manual-filter-val').value;
+        if(col && val) {
+            addFilterRow(col, val, op);
+            document.getElementById('manual-filter-val').value = '';
+        }
+    }
+
+    function addFilterRow(col, val, op = '=') { 
+        if (!filters.find(f => f.col === col && f.op === op && f.val === val)) { 
+            filters.push({logic:'AND', col, op, val}); 
+            renderFilterUI(); loadAllData(); 
+            if(document.getElementById('graphModal').style.display==="block") loadStarGraphData(); 
+        } 
+    }
+
+    function renderFlowDesigner() {
+        document.getElementById('flow-layers-ui').innerHTML = flowLayers.map((l, i) => `
+            <div style="background:#f1f5f9; border:1px solid #cbd5e1; padding:4px 8px; border-radius:4px; display:flex; gap:5px; align-items:center;">
+                <b>Tầng ${i+1}</b> <input type="text" list="column-datalist" value="${l}" onchange="flowLayers[${i}]=this.value" style="width:130px; border:none; background:transparent;">
+                <span style="cursor:pointer; color:#e11d48; font-weight:bold;" onclick="flowLayers.splice(${i},1); renderFlowDesigner();">×</span>
+            </div>`).join(' <span style="color:#94a3b8; font-size:16px;">➔</span> ');
+    }
+    function addFlowLayer() { if(flowLayers.length < 5) { flowLayers.push(allColumns[0] || 'Rule'); renderFlowDesigner(); } }
+    function toggleWidgetView(idx, view) { config.widgets[idx].view = view; loadAllData(); }
+
+    // --- MAIN DATA LOADER ---
+    async function loadAllData() {
+        if (activeDatasets.length === 0) return;
+        const dStr = encodeURIComponent(JSON.stringify(activeDatasets));
+        const fStr = encodeURIComponent(JSON.stringify(filters));
+        const tParams = `&start=${document.getElementById('start-time').value}&end=${document.getElementById('end-time').value}`;
+        const qStr = encodeURIComponent(document.getElementById('q-search').value);
+        const baseQuery = `datasets=${dStr}&filters=${fStr}${tParams}`;
+
+        // 1. Dashboards
+        const wContainer = document.getElementById('widgets-container');
+        wContainer.innerHTML = config.widgets.map((w, i) => `
+            <div class="card">
+                <div class="chart-ctrl">
+                    <button class="ctrl-btn ${w.view==='list'?'active':''}" onclick="toggleWidgetView(${i},'list')">L</button>
+                    <button class="ctrl-btn ${w.view==='bar'?'active':''}" onclick="toggleWidgetView(${i},'bar')">B</button>
+                    <button class="ctrl-btn ${w.view==='pie'?'active':''}" onclick="toggleWidgetView(${i},'pie')">P</button>
+                    <button class="ctrl-btn" style="color:#e11d48;" onclick="config.widgets.splice(${i},1); loadAllData();">X</button>
+                </div>
+                <h3>${w.col} <span style="color:#3b82f6;">(${w.metric})</span></h3>
+                <div id="w-dom-${i}" style="width:100%; height:180px; overflow-y:auto;"></div>
+            </div>`).join('');
+
+        config.widgets.forEach(async (w, i) => {
+            const data = await fetch(`/api/dynamic-stats?col=${encodeURIComponent(w.col)}&metric=${w.metric}&${baseQuery}`).then(r => r.json());
+            let dom = document.getElementById(`w-dom-${i}`);
+            const isByte = w.metric !== 'sessions';
+            const unit = isByte ? '<span class="unit">MB</span>' : '';
+
+            if (w.view === 'list') {
+                dom.innerHTML = `<ul class="top-list">${data.map(d => `<li onclick="addFilterRow('${w.col}','${d.name}')"><span>${d.name}</span><div><span class="metric-val">${d.count}</span>${unit}</div></li>`).join('')}</ul>`;
+            } else {
+                if(widgetCharts[i]) echarts.dispose(dom); widgetCharts[i] = echarts.init(dom);
+                let opt = w.view === 'bar' ? {
+                    yAxis:{type:'category', data:data.map(d=>d.name).reverse(), axisLabel:{fontSize:10}}, xAxis:{show:false}, 
+                    series:[{type:'bar', data:data.map(d=>d.count).reverse(), itemStyle:{color:'#3b82f6'}, label:{show:true, position:'right', fontSize:9}}], 
+                    grid:{left:'35%', bottom:10, top:5}, tooltip:{trigger:'axis'}
+                } : { tooltip:{trigger:'item'}, series:[{type:'pie', radius:['40%','70%'], data:data.map(d=>({name:d.name, value:d.count}))}] };
+                widgetCharts[i].setOption(opt); widgetCharts[i].on('click', p => addFilterRow(w.col, p.name));
+            }
+        });
+
+        // 2. Sankey Flow (BẢN VÁ: Sử dụng parseFloat an toàn tuyệt đối)
+        const flowData = await fetch(`/api/flow-data?cols=${encodeURIComponent(JSON.stringify(flowLayers))}&${baseQuery}`).then(r => r.json());
+        let nodesMap = new Map(), linksMap = {};
+        flowData.forEach(d => {
+            let path = [];
+            for(let i=0; i<flowLayers.length; i++){ 
+                let v = d[`col_${i}`]; if(v === "N/A" || v === '') v = "Unknown";
+                let n = `T${i}: ${v}`; 
+                if(!nodesMap.has(n)) nodesMap.set(n, {name: n, value: 0, sent: 0, recv: 0, total: 0});
+                let node = nodesMap.get(n); 
+                node.value += parseFloat(d.value) || 0; 
+                node.sent += parseFloat(d.sent_mb) || 0; 
+                node.recv += parseFloat(d.recv_mb) || 0; 
+                node.total += parseFloat(d.total_mb) || 0;
+                path.push(n); 
+            }
+            for(let i=0; i<path.length-1; i++){ 
+                let k = path[i]+"|_|"+path[i+1]; 
+                if(!linksMap[k]) linksMap[k] = {value: 0, sent: 0, recv: 0, total: 0};
+                linksMap[k].value += parseFloat(d.value) || 0; 
+                linksMap[k].sent += parseFloat(d.sent_mb) || 0; 
+                linksMap[k].recv += parseFloat(d.recv_mb) || 0; 
+                linksMap[k].total += parseFloat(d.total_mb) || 0;
+            }
+        });
+        
+        let sankeyOpt = {
+            tooltip: {
+                trigger: 'item',
+                formatter: function(params) {
+                    if(!params.data) return '';
+                    let d = params.data;
+                    
+                    let title = params.dataType === 'edge' ? `${d.source.split(': ')[1]} ➔ ${d.target.split(': ')[1]}` : (d.name ? d.name.split(': ')[1] : 'Unknown');
+                    
+                    // Parse an toàn để tránh lỗi toFixed() gây văng Tooltip
+                    let total = parseFloat(d.total) || 0;
+                    let sent = parseFloat(d.sent) || 0;
+                    let recv = parseFloat(d.recv) || 0;
+                    let val = parseFloat(d.value) || 0;
+                    
+                    let bytesHtml = (total === 0 && sent === 0 && recv === 0) ? '' : `<div style="display:flex; justify-content:space-between;"><span>Total Bytes:</span> <b style="color:#3b82f6;">${total.toFixed(2)} MB</b></div><div style="display:flex; justify-content:space-between;"><span>Bytes Sent:</span> <b style="color:#ef4444;">${sent.toFixed(2)} MB</b></div><div style="display:flex; justify-content:space-between;"><span>Bytes Recv:</span> <b style="color:#10b981;">${recv.toFixed(2)} MB</b></div>`;
+                    return `<div style="font-size:13px; border-bottom:1px solid #e2e8f0; margin-bottom:5px; padding-bottom:5px; font-weight:bold;">${title}</div><div style="display:flex; justify-content:space-between; width: 180px;"><span>Sessions:</span> <b>${val.toLocaleString()}</b></div>${bytesHtml}`;
+                }
+            },
+            series: [{ type: 'sankey', roam: true, draggable: true, data: Array.from(nodesMap.values()), links: Object.keys(linksMap).map(k => ({source: k.split("|_|")[0], target: k.split("|_|")[1], value: linksMap[k].value, total: linksMap[k].total, sent: linksMap[k].sent, recv: linksMap[k].recv})), lineStyle: {color: 'gradient', curveness: 0.5}, emphasis: {focus: 'adjacency'} }]
+        };
+        sankeyChart.setOption(sankeyOpt, true);
+        if(document.getElementById('sankeyModal').style.display === "block" && sankeyModalChart) sankeyModalChart.setOption(sankeyOpt, true);
+
+        // 3. Raw Logs
+        const logs = await fetch(`/api/raw-logs?q=${qStr}&${baseQuery}`).then(r => r.json());
+        if(logs.length) {
+            const rawCols = Object.keys(logs[0]).filter(c => c !== 'filename');
+            document.getElementById('thr').innerHTML = `<th style="padding:8px;">LOG TYPE</th>` + rawCols.map(c => `<th style="padding:8px; border-left: 1px solid #e2e8f0;">${c}</th>`).join('');
+            document.getElementById('tbd').innerHTML = logs.map(r => {
+                let source = (r.filename && r.filename !== "N/A") ? r.filename.split(/[\\/]/).pop().replace('.parquet', '').toUpperCase() : 'UNKNOWN';
+                let typeColor = source.includes('THREAT') ? '#e11d48' : source.includes('TRAFFIC') ? '#3b82f6' : source.includes('URL') ? '#10b981' : '#8b5cf6';
+                let rowHtml = `<td style="padding:6px;"><span style="background:${typeColor}; color:white; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:9px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.2);">${source}</span></td>`;
+                
+                rowHtml += rawCols.map(c => {
+                    let val = r[c];
+                    if (val === "N/A" || val === null || val === "") return `<td style="padding:6px; color:#94a3b8; font-style:italic; border-left: 1px solid #f1f5f9; text-align:center;">N/A</td>`;
+                    return `<td style="padding:6px; border-left: 1px solid #f1f5f9;">${val}</td>`;
+                }).join('');
+                return `<tr style="border-bottom: 1px solid #f8fafc;">${rowHtml}</tr>`;
+            }).join('');
+        } else {
+            document.getElementById('thr').innerHTML = '';
+            document.getElementById('tbd').innerHTML = '<tr><td style="padding:10px; color:#ef4444;">Không tìm thấy dữ liệu phù hợp.</td></tr>';
+        }
+    }
+
+    async function loadStarGraphData() {
+        if (activeDatasets.length === 0) return;
+        const dStr = encodeURIComponent(JSON.stringify(activeDatasets));
+        const fStr = encodeURIComponent(JSON.stringify(filters));
+        const tParams = `&start=${document.getElementById('start-time').value}&end=${document.getElementById('end-time').value}`;
+        
+        graphModalChart.showLoading();
+        const edgeData = await fetch(`/api/graph-edges?datasets=${dStr}&filters=${fStr}${tParams}`).then(r => r.json());
+        graphModalChart.hideLoading();
+
+        let nodesMap = new Map(), links = [];
+        edgeData.forEach(e => {
+            if(!nodesMap.has(e.source)) nodesMap.set(e.source, {name: e.source, value: 0, category: 0});
+            if(!nodesMap.has(e.target)) nodesMap.set(e.target, {name: e.target, value: 0, category: 1});
+            nodesMap.get(e.source).value += parseFloat(e.weight) || 0; 
+            nodesMap.get(e.target).value += parseFloat(e.weight) || 0;
+            links.push({ source: e.source, target: e.target, value: parseFloat(e.weight) || 0, lineStyle: { width: Math.max(1, Math.min((parseFloat(e.weight) || 0) / 100, 15)) }});
+        });
+        nodesMap.forEach(n => { n.symbolSize = Math.max(10, Math.min(Math.log(n.value + 1) * 3, 60)); });
+
+        graphModalChart.setOption({
+            tooltip: { trigger: 'item', formatter: '{b}<br/>Activity Weight: {c}' },
+            legend: [{ data: ['Source address', 'Destination address'], textStyle:{color:'#fff'} }],
+            series: [{ type: 'graph', layout: 'force', roam: true, draggable: true, data: Array.from(nodesMap.values()), links: links, categories: [{name: 'Source address'}, {name: 'Destination address'}], label: { show: true, position: 'right', fontSize: 11, color: '#fff' }, force: { repulsion: 300, edgeLength: 120, gravity: 0.1 }, lineStyle: { color: 'source', curveness: 0.1, opacity: 0.5 }, emphasis: { focus: 'adjacency', lineStyle: { width: 4 } } }]
+        }, true);
+    }
+
+    async function handleFileUpload() { 
+        const fileInput = document.getElementById('file-input');
+        if (fileInput.files.length === 0) return;
+        const fd = new FormData(); 
+        for (let i = 0; i < fileInput.files.length; i++) { fd.append("files", fileInput.files[i]); }
+        alert(`Đang xử lý chuyển đổi ${fileInput.files.length} file log... Vui lòng chờ.`);
+        const res = await fetch('/api/upload', {method:'POST', body:fd}); 
+        if(res.ok) location.reload(); else alert("Lỗi nạp file.");
+    }
+    
+    async function clearAllLogs() { if(confirm("Bạn có chắc chắn muốn xóa TOÀN BỘ log?")) { await fetch('/api/clear', {method:'POST'}); location.reload(); } }
+    
+    function handleTimePreset(v) { 
+        if (v === 'all') { document.getElementById('start-time').value = ''; document.getElementById('end-time').value = ''; return; }
+        let n=new Date(), s=new Date(); 
+        if(v==='3h') s.setHours(n.getHours()-3); else if(v==='24h') s.setHours(n.getHours()-24); 
+        s.setMinutes(s.getMinutes() - s.getTimezoneOffset()); n.setMinutes(n.getMinutes() - n.getTimezoneOffset());
+        document.getElementById('start-time').value=s.toISOString().substring(0,16); document.getElementById('end-time').value=n.toISOString().substring(0,16); 
+    }
+    
+    function resetAll() { 
+        filters=[]; document.getElementById('time-preset').value = 'all'; handleTimePreset('all'); 
+        document.getElementById('q-search').value = ''; renderFilterUI(); loadAllData(); 
+        if(document.getElementById('graphModal').style.display==="block") loadStarGraphData(); 
+    }
+    
+    function addWidget() { config.widgets.push({ col: document.getElementById('new-widget-col').value, metric: document.getElementById('new-widget-metric').value, view: 'list' }); loadAllData(); }
+    
+    init();
+</script>
+</body>
+</html>
